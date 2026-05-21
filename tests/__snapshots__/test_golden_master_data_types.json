@@ -1,0 +1,57 @@
+{
+  "0": {
+    "_meta": {
+      "substitute": {
+        "cube_alias": "t",
+        "node_name": "tester"
+      },
+      "title": "t.tester"
+    },
+    "class_type": "DataTypeTester",
+    "inputs": {
+      "bool_val": true,
+      "int_val": 42,
+      "null_val": null,
+      "str_val": "simple string",
+      "text_val": "This is a\nmulti-line\nstring."
+    }
+  },
+  "1": {
+    "_meta": {
+      "substitute": {
+        "cube_alias": "t",
+        "node_name": "cube_output_image"
+      },
+      "title": "t.cube_output_image"
+    },
+    "class_type": "SugarCubes.CubeOutput",
+    "inputs": {
+      "cube_id": "types",
+      "default_alias": "t",
+      "instance_alias": "t",
+      "instance_id": "t",
+      "value": [
+        "0",
+        0
+      ]
+    }
+  },
+  "2": {
+    "_meta": {
+      "substitute": {
+        "cube_alias": "out",
+        "node_name": "save"
+      },
+      "title": "out.save"
+    },
+    "class_type": "FL_SaveImages",
+    "inputs": {
+      "base_directory": "/MOCKED/PATH/output",
+      "filename_prefix": "Sugar",
+      "images": [
+        "0",
+        0
+      ]
+    }
+  }
+}

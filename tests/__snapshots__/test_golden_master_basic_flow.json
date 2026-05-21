@@ -1,0 +1,113 @@
+{
+  "0": {
+    "_meta": {
+      "substitute": {
+        "cube_alias": "src",
+        "node_name": "empty_latent"
+      },
+      "title": "src.empty_latent"
+    },
+    "class_type": "EmptyLatentImage",
+    "inputs": {
+      "batch_size": 1,
+      "height": 512,
+      "width": 512
+    }
+  },
+  "1": {
+    "_meta": {
+      "substitute": {
+        "cube_alias": "src",
+        "node_name": "cube_output_latent"
+      },
+      "title": "src.cube_output_latent"
+    },
+    "class_type": "SugarCubes.CubeOutput",
+    "inputs": {
+      "cube_id": "source",
+      "default_alias": "src",
+      "instance_alias": "src",
+      "instance_id": "src",
+      "value": [
+        "0",
+        0
+      ]
+    }
+  },
+  "2": {
+    "_meta": {
+      "substitute": {
+        "cube_alias": "proc",
+        "node_name": "loader"
+      },
+      "title": "proc.loader"
+    },
+    "class_type": "CheckpointLoaderSimple",
+    "inputs": {
+      "ckpt_name": "model.safetensors"
+    }
+  },
+  "3": {
+    "_meta": {
+      "substitute": {
+        "cube_alias": "proc",
+        "node_name": "sampler"
+      },
+      "title": "proc.sampler"
+    },
+    "class_type": "KSampler",
+    "inputs": {
+      "cfg": 8.0,
+      "latents": [
+        "0",
+        0
+      ],
+      "model": [
+        "2",
+        0
+      ],
+      "sampler_name": "euler",
+      "scheduler": "normal",
+      "seed": 0,
+      "steps": 30
+    }
+  },
+  "4": {
+    "_meta": {
+      "substitute": {
+        "cube_alias": "proc",
+        "node_name": "cube_output_image"
+      },
+      "title": "proc.cube_output_image"
+    },
+    "class_type": "SugarCubes.CubeOutput",
+    "inputs": {
+      "cube_id": "processor",
+      "default_alias": "proc",
+      "instance_alias": "proc",
+      "instance_id": "proc",
+      "value": [
+        "3",
+        0
+      ]
+    }
+  },
+  "5": {
+    "_meta": {
+      "substitute": {
+        "cube_alias": "out",
+        "node_name": "save"
+      },
+      "title": "out.save"
+    },
+    "class_type": "FL_SaveImages",
+    "inputs": {
+      "base_directory": "/MOCKED/PATH/output",
+      "filename_prefix": "GoldenTest",
+      "images": [
+        "3",
+        0
+      ]
+    }
+  }
+}

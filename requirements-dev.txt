@@ -1,0 +1,7 @@
+pytest-xdist
+ruff
+mypy
+build
+python-semantic-release
+setuptools_scm
+wheel

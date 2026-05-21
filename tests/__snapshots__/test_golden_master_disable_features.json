@@ -1,0 +1,67 @@
+{
+  "0": {
+    "_meta": {
+      "substitute": {
+        "cube_alias": "c",
+        "node_name": "nodeA"
+      },
+      "title": "c.nodeA"
+    },
+    "class_type": "NodeA",
+    "inputs": {}
+  },
+  "1": {
+    "_meta": {
+      "substitute": {
+        "cube_alias": "c",
+        "node_name": "nodeC"
+      },
+      "title": "c.nodeC"
+    },
+    "class_type": "NodeC",
+    "inputs": {
+      "data": [
+        "0",
+        0
+      ]
+    }
+  },
+  "2": {
+    "_meta": {
+      "substitute": {
+        "cube_alias": "c",
+        "node_name": "cube_output_image"
+      },
+      "title": "c.cube_output_image"
+    },
+    "class_type": "SugarCubes.CubeOutput",
+    "inputs": {
+      "cube_id": "chain",
+      "default_alias": "c",
+      "instance_alias": "c",
+      "instance_id": "c",
+      "value": [
+        "1",
+        0
+      ]
+    }
+  },
+  "3": {
+    "_meta": {
+      "substitute": {
+        "cube_alias": "out",
+        "node_name": "save"
+      },
+      "title": "out.save"
+    },
+    "class_type": "FL_SaveImages",
+    "inputs": {
+      "base_directory": "/MOCKED/PATH/output",
+      "filename_prefix": "Sugar",
+      "images": [
+        "1",
+        0
+      ]
+    }
+  }
+}

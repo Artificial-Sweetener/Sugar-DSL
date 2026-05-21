@@ -1,0 +1,49 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyd
+*.so
+*.egg-info/
+.eggs/
+pip-wheel-metadata/
+
+# Packaging
+build/
+dist/
+*.egg
+MANIFEST
+sugar/_version.py
+
+# Tooling
+.coverage
+.coverage.*
+coverage.xml
+htmlcov/
+.mypy_cache/
+.pytest_cache/
+.ruff_cache/
+.tox/
+.nox/
+
+# OS
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Virtual environments
+.venv/
+venv/
+env/
+ENV/
+
+# Local environment
+.env
+.env.*
+!.env.example
+
+# IDE/editor
+.idea/
+.vscode/
+*.swp
+*.swo
+*~

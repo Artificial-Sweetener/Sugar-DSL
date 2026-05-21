@@ -1,0 +1,53 @@
+{
+  "0": {
+    "_meta": {
+      "substitute": {
+        "cube_alias": "r",
+        "node_name": "sampler"
+      },
+      "title": "r.sampler"
+    },
+    "class_type": "KSampler",
+    "inputs": {
+      "seed": 999999
+    }
+  },
+  "1": {
+    "_meta": {
+      "substitute": {
+        "cube_alias": "r",
+        "node_name": "cube_output_image"
+      },
+      "title": "r.cube_output_image"
+    },
+    "class_type": "SugarCubes.CubeOutput",
+    "inputs": {
+      "cube_id": "randomizer",
+      "default_alias": "r",
+      "instance_alias": "r",
+      "instance_id": "r",
+      "value": [
+        "0",
+        0
+      ]
+    }
+  },
+  "2": {
+    "_meta": {
+      "substitute": {
+        "cube_alias": "out",
+        "node_name": "save"
+      },
+      "title": "out.save"
+    },
+    "class_type": "FL_SaveImages",
+    "inputs": {
+      "base_directory": "/MOCKED/PATH/output",
+      "filename_prefix": "Sugar",
+      "images": [
+        "0",
+        0
+      ]
+    }
+  }
+}
