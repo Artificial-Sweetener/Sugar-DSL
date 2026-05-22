@@ -6,6 +6,7 @@ build-backend = "setuptools.build_meta"
 name = "sugar-dsl"
 dynamic = ["version"]
 description = "Composable cube-based workflow system for ComfyUI"
+readme = { file = "README.md", content-type = "text/markdown" }
 authors = [
   { name = "Artificial Sweetener", email = "artificialsweetenerai@proton.me" },
 ]
@@ -31,6 +32,7 @@ dev = [
   "pytest-xdist",
   "python-semantic-release",
   "ruff",
+  "twine",
 ]
 
 [project.urls]

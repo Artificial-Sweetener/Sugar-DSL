@@ -76,6 +76,10 @@ jobs:
         if: steps.semver.outputs.released == 'true'
         run: python -m build
 
+      - name: Check distribution metadata
+        if: steps.semver.outputs.released == 'true'
+        run: python -m twine check --strict dist/*
+
       - name: Upload dist
         if: steps.semver.outputs.released == 'true'
         uses: actions/upload-artifact@v4
