@@ -34,7 +34,6 @@ from .resolver import require_mapping
 
 _CUBE_INPUT_CLASS = "SugarCubes.CubeInput"
 _CUBE_OUTPUT_CLASS = "SugarCubes.CubeOutput"
-_CUBE_INHERIT_CLASS = "SugarCubes.CubeInherit"
 _EXTERNAL_INPUT = "EXTERNAL_INPUT"
 _DEFAULT_NODE_SIZE = [180.0, 60.0]
 _DEFAULT_MARKER_SIZE = [270.0, 90.0]
@@ -56,7 +55,6 @@ class _PlacedCube:
     node_ids_by_key: dict[str, int] = field(default_factory=dict)
     input_marker_ids_by_binding: dict[str, int] = field(default_factory=dict)
     output_marker_ids_by_binding: dict[str, int] = field(default_factory=dict)
-    inherit_marker_ids_by_binding: dict[str, int] = field(default_factory=dict)
 
 
 @dataclass
@@ -139,21 +137,13 @@ def _add_cube_nodes(context: _WorkflowBuildContext, placed: _PlacedCube) -> None
     cube = placed.instance.ui_graph
     binding_targets = _input_target_bindings(cube, placed.instance.alias)
 
-    for binding_name, input_spec in _ordered_bindings(cube, "inputs"):
-        marker_class = (
-            _CUBE_INHERIT_CLASS if _input_binding_is_inherit(input_spec) else _CUBE_INPUT_CLASS
-        )
+    for binding_name, _input_spec in _ordered_bindings(cube, "inputs"):
         marker_id = context.allocate_node_id()
-        marker_lookup = (
-            placed.inherit_marker_ids_by_binding
-            if marker_class == _CUBE_INHERIT_CLASS
-            else placed.input_marker_ids_by_binding
-        )
-        marker_lookup[binding_name] = marker_id
+        placed.input_marker_ids_by_binding[binding_name] = marker_id
         context.nodes.append(
             _build_marker_node(
                 node_id=marker_id,
-                class_type=marker_class,
+                class_type=_CUBE_INPUT_CLASS,
                 binding_name=binding_name,
                 placed=placed,
                 order=len(context.nodes),
@@ -558,8 +548,6 @@ def _group_metadata(
     marker_ids = {
         "inputs": [str(node_id) for node_id in placed.input_marker_ids_by_binding.values()],
         "outputs": [str(node_id) for node_id in placed.output_marker_ids_by_binding.values()],
-        "inherits": [str(node_id) for node_id in placed.inherit_marker_ids_by_binding.values()],
-        "metas": [],
     }
     metadata.update(
         {
@@ -1040,7 +1028,6 @@ def _generated_node_bounds(
     owned_ids = set(placed.node_ids_by_key.values())
     owned_ids.update(placed.input_marker_ids_by_binding.values())
     owned_ids.update(placed.output_marker_ids_by_binding.values())
-    owned_ids.update(placed.inherit_marker_ids_by_binding.values())
     if not owned_ids:
         return None
     xs: list[float] = []
@@ -1180,12 +1167,6 @@ def _coerce_slot(value: Any) -> int:
     return 0
 
 
-def _input_binding_is_inherit(input_spec: object) -> bool:
-    """Return whether a cube input binding represents inheritance."""
-
-    return isinstance(input_spec, dict) and input_spec.get("kind") == "inherit"
-
-
 def _local_node_name(alias: str, node_key: str) -> str:
     """Return an alias-qualified node key without the alias prefix."""
 
@@ -1244,8 +1225,6 @@ def _marker_widget_values(
         instance.alias,
         _instance_id(instance),
     ]
-    if class_type == _CUBE_INHERIT_CLASS:
-        values.append(binding_name.split(".")[-1])
     return values
 
 

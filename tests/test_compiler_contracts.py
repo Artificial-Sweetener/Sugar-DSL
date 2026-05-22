@@ -2001,6 +2001,31 @@ def test_invalid_cube_input_mapping_structure_is_fatal(tmp_path: Path) -> None:
         )
 
 
+def test_validate_cube_document_rejects_inherit_input_kind() -> None:
+    """Reject legacy SugarCubes inherit marker bindings at the catalog boundary."""
+
+    with pytest.raises(
+        RuntimeError,
+        match=r"Cube input binding 'input\.model' has unsupported kind 'inherit'",
+    ):
+        validate_cube_document(
+            current_cube_payload(
+                {
+                    "cube_id": "invalid",
+                    "version": "1.0.0",
+                    "nodes": {"node": {"class_type": "Target", "inputs": {"model": None}}},
+                    "inputs": {
+                        "input.model": {
+                            "kind": "inherit",
+                            "targets": [["node", "model"]],
+                        }
+                    },
+                    "outputs": {"output.model": "node"},
+                }
+            )
+        )
+
+
 def test_dotted_node_keys_remain_distinct_during_compilation(
     tmp_path: Path,
 ) -> None:

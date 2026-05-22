@@ -318,6 +318,12 @@ def _validate_input_bindings(bindings: dict[str, Any]) -> None:
         if isinstance(value, list):
             _validate_input_targets(binding_name, value)
             continue
+        if isinstance(value, dict):
+            kind = value.get("kind", "input")
+            if kind != "input":
+                raise RuntimeError(
+                    f"Cube input binding '{binding_name}' has unsupported kind '{kind}'."
+                )
         if isinstance(value, dict) and "targets" in value:
             targets = value["targets"]
             if not isinstance(targets, list):
