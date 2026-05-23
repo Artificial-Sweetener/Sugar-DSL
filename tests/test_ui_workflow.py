@@ -18,7 +18,7 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any
+from typing import Any, Mapping
 
 from tests.fixtures.cubes import write_cube
 from sugar.api.builder import ComfyArtifacts, build_comfy_artifacts_from_text
@@ -26,6 +26,8 @@ from sugar.api.builder import ComfyArtifacts, build_comfy_artifacts_from_text
 Payload = dict[str, Any]
 
 UUID_WRAPPER = "94f725d5-39bf-4060-be68-f573214a2055"
+UUID_SCALE_WRAPPER = "b0e1bb55-4355-45fb-b65c-345084703f37"
+UUID_SAMPLER_WRAPPER = "1519b3ea-b3f1-45dc-9e4a-e177f5497244"
 
 
 def _source_cube_payload() -> Payload:
@@ -354,6 +356,249 @@ def _widget_control_cube_payload() -> Payload:
     }
 
 
+def _scale_subgraph_cube_payload() -> Payload:
+    """Return a cube whose subgraph body starts with a stale scalar widget value."""
+
+    return {
+        "cube_id": "scale_subgraph",
+        "version": "1.0.0",
+        "nodes": {
+            "upscale": {
+                "class_type": UUID_SCALE_WRAPPER,
+                "inputs": {"value": 1.5},
+            }
+        },
+        "outputs": {"output.value": ["upscale", 0]},
+        "definitions": {
+            "SimpleSyrup.ScaleFactor": {
+                "input": {"required": {"value": ["FLOAT", {"default": 1.5}]}},
+                "input_order": {"required": ["value"]},
+                "output": ["FLOAT"],
+                "output_name": ["FLOAT"],
+            }
+        },
+        "subgraphs": [
+            {
+                "id": UUID_SCALE_WRAPPER,
+                "version": 1,
+                "revision": 0,
+                "state": {},
+                "config": {},
+                "name": "Upscale by Factor",
+                "inputNode": {"id": -10},
+                "outputNode": {"id": -20},
+                "inputs": [
+                    {
+                        "id": "scale-input",
+                        "name": "value",
+                        "label": "Scale Factor",
+                        "type": "FLOAT",
+                        "linkIds": [10],
+                    }
+                ],
+                "outputs": [{"name": "FLOAT", "type": "FLOAT", "linkIds": [11]}],
+                "widgets": [],
+                "nodes": [
+                    {
+                        "id": 101,
+                        "type": "SimpleSyrup.ScaleFactor",
+                        "title": "SimpleSyrup.ScaleFactor",
+                        "inputs": [{"name": "value", "link": 10}],
+                        "outputs": [{"name": "FLOAT", "type": "FLOAT", "links": [11]}],
+                        "widgets_values": [1.5],
+                    }
+                ],
+                "links": [
+                    [10, -10, 0, 101, "value", "FLOAT"],
+                    [11, 101, 0, -20, 0, "FLOAT"],
+                ],
+                "floatingLinks": [],
+                "reroutes": [],
+                "extra": {},
+            }
+        ],
+        "layout": {
+            "nodes": {
+                "upscale": {
+                    "id": "1",
+                    "class_type": UUID_SCALE_WRAPPER,
+                    "pos": [0, 80],
+                    "size": [270, 120],
+                    "title": "Upscale by Factor",
+                    "flags": {},
+                }
+            },
+            "markers": {
+                "output.value": {
+                    "id": "2",
+                    "class_type": "SugarCubes.CubeOutput",
+                    "kind": "output",
+                    "pos": [320, 0],
+                    "size": [270, 90],
+                    "title": "VALUE Output",
+                }
+            },
+            "groups": [_group_payload("Scale Subgraph", 640, 280)],
+        },
+    }
+
+
+def _sampler_subgraph_cube_payload() -> Payload:
+    """Return a cube whose subgraph body starts with stale sampler widgets."""
+
+    return {
+        "cube_id": "sampler_subgraph",
+        "version": "1.0.0",
+        "nodes": {
+            "sampler": {
+                "class_type": UUID_SAMPLER_WRAPPER,
+                "inputs": {
+                    "seed": 123,
+                    "steps": 30,
+                    "cfg": 6.0,
+                    "sampler_name": "euler",
+                    "scheduler": "normal",
+                },
+            }
+        },
+        "outputs": {"output.value": ["sampler", 0]},
+        "definitions": {
+            "SimpleSyrup.KSamplerExtras": {
+                "input": {
+                    "required": {
+                        "seed": ["INT", {"default": 0}],
+                        "steps": ["INT", {"default": 30}],
+                        "cfg": ["FLOAT", {"default": 6.0}],
+                        "sampler_name": [["euler", "er_sde"]],
+                        "scheduler": [["normal", "simple"]],
+                    }
+                },
+                "input_order": {"required": ["seed", "steps", "cfg", "sampler_name", "scheduler"]},
+                "output": ["LATENT"],
+                "output_name": ["LATENT"],
+            }
+        },
+        "subgraphs": [
+            {
+                "id": UUID_SAMPLER_WRAPPER,
+                "version": 1,
+                "revision": 0,
+                "state": {},
+                "config": {},
+                "name": "KSampler",
+                "inputNode": {"id": -10},
+                "outputNode": {"id": -20},
+                "inputs": [
+                    {"name": "seed", "type": "INT", "linkIds": [20]},
+                    {"name": "steps", "type": "INT", "linkIds": [21]},
+                    {"name": "cfg", "type": "FLOAT", "linkIds": [22]},
+                    {"name": "sampler_name", "type": "COMBO", "linkIds": [23]},
+                    {"name": "scheduler", "type": "COMBO", "linkIds": [24]},
+                ],
+                "outputs": [{"name": "LATENT", "type": "LATENT", "linkIds": [25]}],
+                "widgets": [],
+                "nodes": [
+                    {
+                        "id": 201,
+                        "type": "SimpleSyrup.KSamplerExtras",
+                        "title": "ksampler",
+                        "inputs": [
+                            {"name": "seed", "link": 20},
+                            {"name": "steps", "link": 21},
+                            {"name": "cfg", "link": 22},
+                            {"name": "sampler_name", "link": 23},
+                            {"name": "scheduler", "link": 24},
+                        ],
+                        "outputs": [{"name": "LATENT", "type": "LATENT", "links": [25]}],
+                        "widgets_values": [999, "randomize", 30, 6.0, "euler", "normal"],
+                    }
+                ],
+                "links": [
+                    [20, -10, 0, 201, 0, "INT"],
+                    [21, -10, 1, 201, 1, "INT"],
+                    [22, -10, 2, 201, 2, "FLOAT"],
+                    [23, -10, 3, 201, 3, "COMBO"],
+                    [24, -10, 4, 201, 4, "COMBO"],
+                    [25, 201, 0, -20, 0, "LATENT"],
+                ],
+                "floatingLinks": [],
+                "reroutes": [],
+                "extra": {},
+            }
+        ],
+        "layout": {
+            "nodes": {
+                "sampler": {
+                    "id": "1",
+                    "class_type": UUID_SAMPLER_WRAPPER,
+                    "pos": [0, 80],
+                    "size": [300, 160],
+                    "title": "KSampler",
+                    "flags": {},
+                }
+            },
+            "markers": {
+                "output.value": {
+                    "id": "2",
+                    "class_type": "SugarCubes.CubeOutput",
+                    "kind": "output",
+                    "pos": [360, 0],
+                    "size": [270, 90],
+                    "title": "LATENT Output",
+                }
+            },
+            "groups": [_group_payload("Sampler Subgraph", 700, 340)],
+        },
+    }
+
+
+def _value_sink_cube_payload() -> Payload:
+    """Return a sink cube that can connect otherwise independent value producers."""
+
+    return {
+        "cube_id": "value_sink",
+        "version": "1.0.0",
+        "nodes": {
+            "sink": {
+                "class_type": "ValueSink",
+                "inputs": {"value": None},
+            }
+        },
+        "inputs": {"input.value": [["sink", "value"]]},
+        "definitions": {
+            "ValueSink": {
+                "input": {"required": {"value": ["FLOAT"]}},
+                "input_order": {"required": ["value"]},
+                "output": [],
+                "output_name": [],
+            }
+        },
+        "layout": {
+            "nodes": {
+                "sink": {
+                    "id": "1",
+                    "class_type": "ValueSink",
+                    "pos": [300, 80],
+                    "size": [220, 80],
+                    "title": "sink",
+                    "flags": {},
+                }
+            },
+            "markers": {
+                "input.value": {
+                    "id": "2",
+                    "class_type": "SugarCubes.CubeInput",
+                    "kind": "input",
+                    "pos": [0, 0],
+                    "size": [270, 90],
+                    "title": "VALUE Input",
+                }
+            },
+            "groups": [_group_payload("Value Sink", 560, 260)],
+        },
+    }
+
+
 def test_ui_workflow_preserves_authored_wrapper_and_subgraph_definition(
     tmp_path: Path,
 ) -> None:
@@ -369,9 +614,112 @@ def test_ui_workflow_preserves_authored_wrapper_and_subgraph_definition(
 
     assert UUID_WRAPPER not in prompt_types
     assert "RegexExtract" in prompt_types
-    assert UUID_WRAPPER in workflow_types
+    wrapper_node = next(
+        node
+        for node in artifacts["workflow"]["nodes"]
+        if node["properties"].get("sugarcubes_original_subgraph_id") == UUID_WRAPPER
+    )
+    assert wrapper_node["type"] in {
+        subgraph["id"] for subgraph in artifacts["workflow"]["definitions"]["subgraphs"]
+    }
     assert "RegexExtract" not in workflow_types
-    assert artifacts["workflow"]["definitions"]["subgraphs"][0]["id"] == UUID_WRAPPER
+    assert UUID_WRAPPER in {
+        subgraph["extra"].get("sugar", {}).get("original_subgraph_id")
+        for subgraph in artifacts["workflow"]["definitions"]["subgraphs"]
+    }
+
+
+def test_ui_workflow_subgraph_definition_uses_authored_scalar_value(
+    tmp_path: Path,
+) -> None:
+    """UI subgraph body widgets should mirror authored wrapper scalar values."""
+
+    cube_root = tmp_path / "cubes"
+    cube_root.mkdir()
+    write_cube(cube_root / "scale_subgraph.cube", _scale_subgraph_cube_payload())
+
+    workflow = build_comfy_artifacts_from_text(
+        """
+        use "scale_subgraph" as scale
+        set scale.upscale.value = 1.2
+        """,
+        output_dir=tmp_path / "out",
+        cube_root=cube_root,
+    )["workflow"]
+    wrapper = next(node for node in workflow["nodes"] if node["title"] == "Upscale by Factor")
+    subgraph = _subgraph_definition_by_id(workflow, wrapper["type"])
+    body_node = _subgraph_body_node_by_type(subgraph, "SimpleSyrup.ScaleFactor")
+
+    assert wrapper["widgets_values"] == [1.2]
+    assert wrapper["type"] != UUID_SCALE_WRAPPER
+    assert body_node["widgets_values"] == [1.2]
+
+
+def test_ui_workflow_subgraph_definition_uses_authored_sampler_values(
+    tmp_path: Path,
+) -> None:
+    """UI subgraph sampler faces should mirror authored wrapper sampler values."""
+
+    cube_root = tmp_path / "cubes"
+    cube_root.mkdir()
+    write_cube(cube_root / "sampler_subgraph.cube", _sampler_subgraph_cube_payload())
+
+    workflow = build_comfy_artifacts_from_text(
+        """
+        use "sampler_subgraph" as sample
+        set sample.sampler.steps = 8
+        set sample.sampler.cfg = 1.0
+        set sample.sampler.sampler_name = "er_sde"
+        set sample.sampler.scheduler = "simple"
+        """,
+        output_dir=tmp_path / "out",
+        cube_root=cube_root,
+    )["workflow"]
+    wrapper = next(node for node in workflow["nodes"] if node["title"] == "KSampler")
+    subgraph = _subgraph_definition_by_id(workflow, wrapper["type"])
+    body_node = _subgraph_body_node_by_type(subgraph, "SimpleSyrup.KSamplerExtras")
+
+    assert wrapper["widgets_values"] == [123, 8, 1.0, "er_sde", "simple"]
+    assert body_node["widgets_values"] == [123, "randomize", 8, 1.0, "er_sde", "simple"]
+
+
+def test_ui_workflow_clones_subgraph_definitions_per_wrapper_instance(
+    tmp_path: Path,
+) -> None:
+    """Different wrapper instances should not share one mutable subgraph face."""
+
+    cube_root = tmp_path / "cubes"
+    cube_root.mkdir()
+    write_cube(cube_root / "scale_subgraph.cube", _scale_subgraph_cube_payload())
+    write_cube(cube_root / "value_sink.cube", _value_sink_cube_payload())
+
+    workflow = build_comfy_artifacts_from_text(
+        """
+        use "scale_subgraph" as A
+        use "scale_subgraph" as B
+        use "value_sink" as SA
+        use "value_sink" as SB
+        set A.upscale.value = 1.2
+        set B.upscale.value = 2.0
+        connect A.output.value to SA.input.value
+        connect B.output.value to SB.input.value
+        """,
+        output_dir=tmp_path / "out",
+        cube_root=cube_root,
+    )["workflow"]
+    wrappers = [node for node in workflow["nodes"] if node["title"] == "Upscale by Factor"]
+    wrapper_types = {node["type"] for node in wrappers}
+
+    assert len(wrappers) == 2
+    assert len(wrapper_types) == 2
+    assert UUID_SCALE_WRAPPER not in wrapper_types
+    assert {
+        _subgraph_body_node_by_type(
+            _subgraph_definition_by_id(workflow, node["type"]),
+            "SimpleSyrup.ScaleFactor",
+        )["widgets_values"][0]
+        for node in wrappers
+    } == {1.2, 2.0}
 
 
 def test_ui_workflow_emits_sugarcubes_markers_groups_and_typed_slots(
@@ -390,7 +738,11 @@ def test_ui_workflow_emits_sugarcubes_markers_groups_and_typed_slots(
     input_marker = next(
         node for node in workflow["nodes"] if node["type"] == "SugarCubes.CubeInput"
     )
-    wrapper_node = next(node for node in workflow["nodes"] if node["type"] == UUID_WRAPPER)
+    wrapper_node = next(
+        node
+        for node in workflow["nodes"]
+        if node["properties"].get("sugarcubes_original_subgraph_id") == UUID_WRAPPER
+    )
     text_node = next(
         node for node in workflow["nodes"] if node["type"] == "PrimitiveStringMultiline"
     )
@@ -864,6 +1216,23 @@ def _inherited_checkpoint_definitions() -> dict[str, Any]:
             "python_module": "custom_nodes.example",
         },
     }
+
+
+def _subgraph_definition_by_id(workflow: Mapping[str, Any], subgraph_id: str) -> Mapping[str, Any]:
+    """Return one emitted UI subgraph definition by id."""
+
+    definitions = workflow["definitions"]
+    subgraphs = definitions["subgraphs"]
+    return next(subgraph for subgraph in subgraphs if subgraph["id"] == subgraph_id)
+
+
+def _subgraph_body_node_by_type(
+    subgraph: Mapping[str, Any],
+    class_type: str,
+) -> Mapping[str, Any]:
+    """Return one emitted subgraph body node by Comfy class type."""
+
+    return next(node for node in subgraph["nodes"] if node["type"] == class_type)
 
 
 def _group_payload(title: str, width: int, height: int) -> dict[str, Any]:

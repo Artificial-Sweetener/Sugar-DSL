@@ -20,17 +20,32 @@ from __future__ import annotations
 import copy
 import hashlib
 import json
+import uuid
 from collections import defaultdict
 from collections.abc import Iterable, Mapping, MutableMapping, Sequence
 from dataclasses import dataclass, field
 from typing import Any
 
-from ..catalog.subgraphs import definition_field_has_serialized_control_widget
+from ..catalog.subgraphs import (
+    definition_field_has_serialized_control_widget,
+    definition_input_has_serialized_control_widget,
+    definition_input_order,
+    is_comfy_control_widget_value,
+    node_class_type,
+    normalize_link,
+    normalize_node_id,
+)
 from .graph import CubeGraph
 from .ir import ConnectionEntry
 from .links import is_comfy_node_link
 from .recipe import MaterializedCubeInstance, MaterializedRecipe
 from .resolver import require_mapping
+from .subgraph_interfaces import (
+    build_input_name_by_link_id,
+    build_input_name_by_slot,
+    collect_interface_ids,
+    require_interface_entries,
+)
 
 _CUBE_INPUT_CLASS = "SugarCubes.CubeInput"
 _CUBE_OUTPUT_CLASS = "SugarCubes.CubeOutput"
@@ -57,6 +72,14 @@ class _PlacedCube:
     output_marker_ids_by_binding: dict[str, int] = field(default_factory=dict)
 
 
+@dataclass(frozen=True)
+class _SubgraphInputTarget:
+    """Describe one body node input fed by a subgraph interface input."""
+
+    node_id: str
+    input_name: str
+
+
 @dataclass
 class _WorkflowBuildContext:
     """Own mutable state while emitting a Comfy UI workflow."""
@@ -65,6 +88,7 @@ class _WorkflowBuildContext:
     next_link_id: int = 1
     nodes: list[dict[str, Any]] = field(default_factory=list)
     links: list[list[Any]] = field(default_factory=list)
+    subgraph_definitions_by_id: dict[str, dict[str, Any]] = field(default_factory=dict)
     output_links_by_node_slot: dict[tuple[int, int], list[int]] = field(
         default_factory=lambda: defaultdict(list)
     )
@@ -127,7 +151,7 @@ def recipe_to_ui_workflow(recipe: MaterializedRecipe) -> dict[str, Any]:
             "sugar": {"warnings": list(recipe.warnings)},
         },
         "version": 0.4,
-        "definitions": _merge_subgraph_definitions(recipe),
+        "definitions": _merge_subgraph_definitions(recipe, context),
     }
 
 
@@ -159,6 +183,7 @@ def _add_cube_nodes(context: _WorkflowBuildContext, placed: _PlacedCube) -> None
         placed.node_ids_by_key[node_key] = node_id
         context.nodes.append(
             _build_internal_node(
+                context=context,
                 node_id=node_id,
                 node_key=node_key,
                 node_payload=node_payload,
@@ -310,6 +335,7 @@ def _add_recipe_connection(
 
 def _build_internal_node(
     *,
+    context: _WorkflowBuildContext,
     node_id: int,
     node_key: str,
     node_payload: Mapping[str, Any],
@@ -320,21 +346,31 @@ def _build_internal_node(
 
     cube = placed.instance.ui_graph
     local_name = _local_node_name(placed.instance.alias, node_key)
-    class_type = str(node_payload.get("class_type") or "")
+    authored_class_type = str(node_payload.get("class_type") or "")
+    emitted_class_type = _materialize_ui_subgraph_definition(
+        context=context,
+        placed=placed,
+        node_key=node_key,
+        node_payload=node_payload,
+        class_type=authored_class_type,
+    )
     layout = _layout_entry(cube, "nodes", local_name)
+    properties = _node_properties(cube, authored_class_type, local_name, node_payload)
+    if emitted_class_type != authored_class_type:
+        properties["sugarcubes_original_subgraph_id"] = authored_class_type
     workflow_node: dict[str, Any] = {
         "id": node_id,
-        "type": class_type,
+        "type": emitted_class_type,
         "pos": _shifted_vec2(layout.get("pos"), placed.origin)
         or _grid_position(placed.origin, len(placed.node_ids_by_key)),
         "size": _layout_size(layout, _DEFAULT_NODE_SIZE),
         "flags": _layout_flags(layout),
         "order": order,
         "mode": _node_mode(node_payload, layout),
-        "inputs": _build_input_slots(cube, class_type, node_payload),
-        "outputs": _build_output_slots(cube, class_type),
-        "properties": _node_properties(cube, class_type, local_name, node_payload),
-        "widgets_values": _widget_values(cube, class_type, node_payload),
+        "inputs": _build_input_slots(cube, authored_class_type, node_payload),
+        "outputs": _build_output_slots(cube, authored_class_type),
+        "properties": properties,
+        "widgets_values": _widget_values(cube, authored_class_type, node_payload),
     }
     title = layout.get("title")
     if isinstance(title, str) and title:
@@ -344,6 +380,324 @@ def _build_internal_node(
         if isinstance(style_value, str):
             workflow_node[style_key] = style_value
     return workflow_node
+
+
+def _materialize_ui_subgraph_definition(
+    *,
+    context: _WorkflowBuildContext,
+    placed: _PlacedCube,
+    node_key: str,
+    node_payload: Mapping[str, Any],
+    class_type: str,
+) -> str:
+    """Clone subgraph definitions per wrapper instance for accurate UI faces."""
+
+    cube = placed.instance.ui_graph
+    subgraph = _subgraph_by_id(cube, class_type)
+    if subgraph is None:
+        return class_type
+
+    cloned_id = _ui_subgraph_instance_id(
+        original_id=class_type,
+        alias=placed.instance.alias,
+        node_key=node_key,
+    )
+    if cloned_id not in context.subgraph_definitions_by_id:
+        context.subgraph_definitions_by_id[cloned_id] = _clone_subgraph_for_ui_wrapper(
+            cube=cube,
+            subgraph=subgraph,
+            wrapper_node=node_payload,
+            cloned_id=cloned_id,
+            original_id=class_type,
+        )
+    return cloned_id
+
+
+def _ui_subgraph_instance_id(*, original_id: str, alias: str, node_key: str) -> str:
+    """Return a deterministic Comfy-safe subgraph id for one wrapper instance."""
+
+    seed = json.dumps(
+        {
+            "alias": alias,
+            "node_key": node_key,
+            "original_id": original_id,
+        },
+        sort_keys=True,
+        separators=(",", ":"),
+    )
+    return str(uuid.uuid5(uuid.NAMESPACE_URL, f"sugar-dsl-ui-subgraph:{seed}"))
+
+
+def _clone_subgraph_for_ui_wrapper(
+    *,
+    cube: CubeGraph,
+    subgraph: Mapping[str, Any],
+    wrapper_node: Mapping[str, Any],
+    cloned_id: str,
+    original_id: str,
+) -> dict[str, Any]:
+    """Return a subgraph clone whose body widgets reflect wrapper literals."""
+
+    cloned = copy.deepcopy(dict(subgraph))
+    cloned["id"] = cloned_id
+    extra = cloned.get("extra")
+    if not isinstance(extra, dict):
+        extra = {}
+        cloned["extra"] = extra
+    sugar_extra = extra.get("sugar")
+    if not isinstance(sugar_extra, dict):
+        sugar_extra = {}
+        extra["sugar"] = sugar_extra
+    sugar_extra["original_subgraph_id"] = original_id
+    _apply_wrapper_literals_to_subgraph_clone(
+        cube=cube,
+        cloned_subgraph=cloned,
+        wrapper_node=wrapper_node,
+    )
+    return cloned
+
+
+def _apply_wrapper_literals_to_subgraph_clone(
+    *,
+    cube: CubeGraph,
+    cloned_subgraph: MutableMapping[str, Any],
+    wrapper_node: Mapping[str, Any],
+) -> None:
+    """Apply authored wrapper literal inputs to cloned subgraph body widgets."""
+
+    wrapper_literals = _wrapper_literal_inputs(wrapper_node, cloned_subgraph)
+    if not wrapper_literals:
+        return
+
+    targets_by_input = _subgraph_input_links_by_wrapper_input(cloned_subgraph)
+    nodes_by_id = _subgraph_nodes_by_id(cloned_subgraph)
+    definitions = cube.get("definitions")
+    if not isinstance(definitions, Mapping):
+        definitions = {}
+
+    for wrapper_input, value in wrapper_literals.items():
+        for target in targets_by_input.get(wrapper_input, ()):
+            body_node = nodes_by_id.get(target.node_id)
+            if body_node is None:
+                continue
+            class_type = node_class_type(body_node)
+            if class_type is None:
+                continue
+            _set_subgraph_node_literal_value(
+                definitions=definitions,
+                body_node=body_node,
+                class_type=class_type,
+                input_name=target.input_name,
+                value=value,
+            )
+
+
+def _wrapper_literal_inputs(
+    wrapper_node: Mapping[str, Any],
+    subgraph: Mapping[str, Any],
+) -> dict[str, Any]:
+    """Return non-link wrapper values keyed by subgraph interface input name."""
+
+    literals: dict[str, Any] = {}
+    inputs = wrapper_node.get("inputs")
+    if isinstance(inputs, Mapping):
+        for input_name, value in inputs.items():
+            if value is None or is_comfy_node_link(value):
+                continue
+            literals[str(input_name)] = copy.deepcopy(value)
+
+    explicit = wrapper_node.get("widgets_values")
+    if isinstance(explicit, Mapping):
+        for input_name, value in explicit.items():
+            if value is not None and str(input_name) not in literals:
+                literals[str(input_name)] = copy.deepcopy(value)
+    elif isinstance(explicit, list):
+        for index, input_entry in enumerate(_subgraph_input_entries(subgraph)):
+            if index >= len(explicit):
+                break
+            input_name = input_entry.get("name")
+            if isinstance(input_name, str) and input_name not in literals:
+                literals[input_name] = copy.deepcopy(explicit[index])
+    return literals
+
+
+def _subgraph_input_links_by_wrapper_input(
+    subgraph: Mapping[str, Any],
+) -> dict[str, list[_SubgraphInputTarget]]:
+    """Return body node targets reached from each wrapper interface input."""
+
+    input_entries = require_interface_entries(
+        definition=subgraph,
+        field_name="inputs",
+        wrapper_key=str(subgraph.get("id") or "<ui-subgraph>"),
+    )
+    input_name_by_slot = build_input_name_by_slot(
+        input_entries=input_entries,
+        wrapper_key=str(subgraph.get("id") or "<ui-subgraph>"),
+        subgraph_id=str(subgraph.get("id") or ""),
+    )
+    input_name_by_link_id = build_input_name_by_link_id(
+        input_entries=input_entries,
+        wrapper_key=str(subgraph.get("id") or "<ui-subgraph>"),
+        subgraph_id=str(subgraph.get("id") or ""),
+    )
+    input_interface_ids = collect_interface_ids(subgraph.get("inputNode"), default="-10")
+    body_nodes_by_id = _subgraph_nodes_by_id(subgraph)
+
+    targets: dict[str, list[_SubgraphInputTarget]] = {}
+    raw_links = subgraph.get("links")
+    if not isinstance(raw_links, list):
+        return targets
+    for raw_link in raw_links:
+        link = normalize_link(raw_link)
+        if link is None or link["origin_id"] not in input_interface_ids:
+            continue
+        wrapper_input_name = input_name_by_link_id.get(link["id"]) or input_name_by_slot.get(
+            link["origin_slot"]
+        )
+        if wrapper_input_name is None:
+            continue
+        body_node = body_nodes_by_id.get(link["target_id"])
+        if body_node is None:
+            continue
+        target_input_name = _subgraph_target_input_name(body_node, link)
+        if target_input_name is None:
+            continue
+        targets.setdefault(wrapper_input_name, []).append(
+            _SubgraphInputTarget(
+                node_id=link["target_id"],
+                input_name=target_input_name,
+            )
+        )
+    return targets
+
+
+def _subgraph_input_entries(subgraph: Mapping[str, Any]) -> list[Mapping[str, Any]]:
+    """Return mapping entries from a subgraph input interface array."""
+
+    raw_inputs = subgraph.get("inputs")
+    if not isinstance(raw_inputs, list):
+        return []
+    return [entry for entry in raw_inputs if isinstance(entry, Mapping)]
+
+
+def _subgraph_nodes_by_id(subgraph: Mapping[str, Any]) -> dict[str, MutableMapping[str, Any]]:
+    """Return mutable subgraph body nodes by normalized serialized node id."""
+
+    raw_nodes = subgraph.get("nodes")
+    if not isinstance(raw_nodes, list):
+        return {}
+    nodes_by_id: dict[str, MutableMapping[str, Any]] = {}
+    for node in raw_nodes:
+        if not isinstance(node, MutableMapping):
+            continue
+        node_id = normalize_node_id(node.get("id"))
+        if node_id is not None:
+            nodes_by_id[node_id] = node
+    return nodes_by_id
+
+
+def _subgraph_target_input_name(
+    body_node: Mapping[str, Any],
+    link: Mapping[str, Any],
+) -> str | None:
+    """Resolve a subgraph body input name targeted by one normalized link."""
+
+    target_port = link.get("target_port")
+    if isinstance(target_port, str) and target_port:
+        return target_port
+
+    raw_inputs = body_node.get("inputs")
+    if isinstance(raw_inputs, list):
+        for index, entry in enumerate(raw_inputs):
+            if not isinstance(entry, Mapping):
+                continue
+            name = entry.get("name")
+            if not isinstance(name, str) or not name:
+                continue
+            if _coerce_slot(entry.get("link")) == link.get("id"):
+                return name
+            if isinstance(target_port, int) and target_port == index:
+                return name
+    return None
+
+
+def _set_subgraph_node_literal_value(
+    *,
+    definitions: Mapping[str, Any],
+    body_node: MutableMapping[str, Any],
+    class_type: str,
+    input_name: str,
+    value: Any,
+) -> None:
+    """Set a cloned subgraph node widget/input literal without disturbing links."""
+
+    _set_subgraph_node_widget_value(
+        definitions=definitions,
+        body_node=body_node,
+        class_type=class_type,
+        input_name=input_name,
+        value=value,
+    )
+    raw_inputs = body_node.get("inputs")
+    if isinstance(raw_inputs, MutableMapping):
+        current = raw_inputs.get(input_name)
+        if not is_comfy_node_link(current):
+            raw_inputs[input_name] = copy.deepcopy(value)
+
+
+def _set_subgraph_node_widget_value(
+    *,
+    definitions: Mapping[str, Any],
+    body_node: MutableMapping[str, Any],
+    class_type: str,
+    input_name: str,
+    value: Any,
+) -> None:
+    """Set one serialized widget value on a cloned subgraph body node."""
+
+    widgets = body_node.get("widgets_values")
+    if isinstance(widgets, MutableMapping):
+        widgets[input_name] = copy.deepcopy(value)
+        return
+    if not isinstance(widgets, list):
+        return
+
+    widget_index = _serialized_widget_index(
+        definitions=definitions,
+        class_type=class_type,
+        input_name=input_name,
+        widgets=widgets,
+    )
+    if widget_index is None:
+        return
+    if widget_index < len(widgets):
+        widgets[widget_index] = copy.deepcopy(value)
+    elif widget_index == len(widgets):
+        widgets.append(copy.deepcopy(value))
+
+
+def _serialized_widget_index(
+    *,
+    definitions: Mapping[str, Any],
+    class_type: str,
+    input_name: str,
+    widgets: Sequence[Any],
+) -> int | None:
+    """Return the index where one input is serialized in ``widgets_values``."""
+
+    value_index = 0
+    for candidate in definition_input_order(definitions, class_type):
+        if candidate == input_name:
+            return value_index
+        value_index += 1
+        if (
+            definition_input_has_serialized_control_widget(definitions, class_type, candidate)
+            and value_index < len(widgets)
+            and is_comfy_control_widget_value(widgets[value_index])
+        ):
+            value_index += 1
+    return None
 
 
 def _build_marker_node(
@@ -692,8 +1046,11 @@ def _topological_component_order(
     )
 
 
-def _merge_subgraph_definitions(recipe: MaterializedRecipe) -> dict[str, Any]:
-    """Merge authored subgraph definitions and fail on conflicting ids."""
+def _merge_subgraph_definitions(
+    recipe: MaterializedRecipe,
+    context: _WorkflowBuildContext,
+) -> dict[str, Any]:
+    """Merge raw and instance-specific subgraph definitions for UI export."""
 
     merged_by_id: dict[str, dict[str, Any]] = {}
     for alias in recipe.order:
@@ -712,6 +1069,11 @@ def _merge_subgraph_definitions(recipe: MaterializedRecipe) -> dict[str, Any]:
             if existing is not None and existing != copied:
                 raise RuntimeError(f"Conflicting SugarCubes subgraph definition '{subgraph_id}'.")
             merged_by_id[subgraph_id] = copied
+    for subgraph_id, subgraph in context.subgraph_definitions_by_id.items():
+        existing = merged_by_id.get(subgraph_id)
+        if existing is not None and existing != subgraph:
+            raise RuntimeError(f"Conflicting SugarCubes subgraph definition '{subgraph_id}'.")
+        merged_by_id[subgraph_id] = copy.deepcopy(subgraph)
     return {"subgraphs": list(merged_by_id.values())}
 
 
