@@ -23,17 +23,23 @@ import logging
 from typing import cast
 
 from ..shared.seed import SeedProvider
+from .errors import SugarCompilerError
 from .graph import CubeGraph
+from .live_definitions import LiveNodeDefinitionProvider, LiveNodeInputDefinition
 
 logger = logging.getLogger(__name__)
 
 _MISSING = object()
+_ACTIONABLE_WIDGET_TYPES = frozenset({"BOOLEAN", "BOOL", "FLOAT", "INT", "STRING", "COMBO"})
 
 
 def materialize_node_inputs(
     cube: CubeGraph,
     *,
     seed_provider: SeedProvider,
+    live_node_definition_provider: LiveNodeDefinitionProvider | None = None,
+    cube_alias: str | None = None,
+    cube_id: str | None = None,
 ) -> None:
     """Fill safe schema-backed inputs on one materialized cube graph."""
 
@@ -41,8 +47,6 @@ def materialize_node_inputs(
     if nodes is None:
         raise RuntimeError("Materialized cube graph is missing a nodes mapping.")
     definitions = _mapping_or_none(cube.get("definitions"))
-    if definitions is None:
-        return
 
     for node_key, node_payload in nodes.items():
         if not isinstance(node_key, str):
@@ -53,21 +57,165 @@ def materialize_node_inputs(
         class_type = node.get("class_type")
         if not isinstance(class_type, str) or not class_type:
             continue
-        definition = _string_mapping_or_none(definitions.get(class_type))
-        if definition is None:
-            continue
         inputs = _node_inputs(node, node_key)
-        for input_name, field_spec in iter_definition_input_fields(definition):
-            if input_name in inputs and inputs[input_name] is not None:
-                continue
-            materialized = _materialized_input_value(
+        if definitions is not None:
+            definition = _string_mapping_or_none(definitions.get(class_type))
+            if definition is not None:
+                _materialize_definition_inputs(
+                    inputs,
+                    node_key=node_key,
+                    definition=definition,
+                    seed_provider=seed_provider,
+                )
+        if live_node_definition_provider is not None:
+            _materialize_live_inputs(
+                inputs,
                 node_key=node_key,
-                input_name=input_name,
-                field_spec=field_spec,
+                class_type=class_type,
+                cube_alias=cube_alias,
+                cube_id=cube_id,
+                live_node_definition_provider=live_node_definition_provider,
                 seed_provider=seed_provider,
             )
-            if materialized is not _MISSING:
-                inputs[input_name] = materialized
+
+
+def _materialize_definition_inputs(
+    inputs: MutableMapping[object, object],
+    *,
+    node_key: str,
+    definition: Mapping[str, object],
+    seed_provider: SeedProvider,
+) -> None:
+    """Apply safe defaults from cube-embedded node definitions."""
+
+    for input_name, field_spec in iter_definition_input_fields(definition):
+        if input_name in inputs and inputs[input_name] is not None:
+            continue
+        materialized = _materialized_input_value(
+            node_key=node_key,
+            input_name=input_name,
+            field_spec=field_spec,
+            seed_provider=seed_provider,
+        )
+        if materialized is not _MISSING:
+            inputs[input_name] = materialized
+
+
+def _materialize_live_inputs(
+    inputs: MutableMapping[object, object],
+    *,
+    node_key: str,
+    class_type: str,
+    cube_alias: str | None,
+    cube_id: str | None,
+    live_node_definition_provider: LiveNodeDefinitionProvider,
+    seed_provider: SeedProvider,
+) -> None:
+    """Apply safe defaults from host-supplied live Comfy definitions."""
+
+    try:
+        live_definition = live_node_definition_provider.definition_for(class_type)
+    except Exception as exc:
+        logger.error(
+            "Live node definition provider failed during input materialization.",
+            extra={
+                "operation": "materialize_live_inputs",
+                "cube_alias": cube_alias or "",
+                "cube_id": cube_id or "",
+                "node_key": node_key,
+                "node_class_type": class_type,
+                "error": str(exc),
+            },
+        )
+        raise SugarCompilerError(
+            f"Live definition lookup failed for node class '{class_type}': {exc}",
+            code="sugar-live-definition-missing",
+            cube_alias=cube_alias,
+            cube_id=cube_id,
+            node_key=node_key,
+            node_class_type=class_type,
+        ) from exc
+    if live_definition is None:
+        return
+    for input_name, live_input in live_definition.inputs.items():
+        if input_name in inputs and inputs[input_name] is not None:
+            continue
+        field_spec = field_spec_from_live_input(live_input)
+        materialized = _materialized_input_value(
+            node_key=node_key,
+            input_name=input_name,
+            field_spec=field_spec,
+            seed_provider=seed_provider,
+        )
+        if materialized is not _MISSING:
+            inputs[input_name] = materialized
+            continue
+        if live_input.required and _should_fail_missing_live_input(node_key, live_input):
+            raise SugarCompilerError(
+                "Required live input has no authored value, script override, "
+                f"or Comfy default: {node_key}.{input_name}",
+                code="sugar-live-default-missing",
+                cube_alias=cube_alias,
+                cube_id=cube_id,
+                node_key=node_key,
+                node_class_type=class_type,
+                input_name=input_name,
+            )
+        if live_input.required:
+            logger.debug(
+                "Required live input was omitted because Sugar cannot safely materialize it.",
+                extra={
+                    "operation": "omit_unmaterialized_live_input",
+                    "cube_alias": cube_alias or "",
+                    "cube_id": cube_id or "",
+                    "node_key": node_key,
+                    "node_class_type": class_type,
+                    "input_name": input_name,
+                    "input_type": live_input.value_type,
+                },
+            )
+
+
+def _should_fail_missing_live_input(
+    node_key: str,
+    live_input: LiveNodeInputDefinition,
+) -> bool:
+    """Return whether a missing required live input should block compilation.
+
+    Missing scalar widgets on public cube nodes are actionable because users can
+    author or override them. Expanded subgraph internals and graph socket types
+    are not safe to synthesize from live metadata alone, so Sugar omits them
+    instead of forcing invisible helper inputs into old cubes.
+    """
+
+    if _is_expanded_subgraph_internal_node(node_key):
+        return False
+    return _is_actionable_widget_input(live_input)
+
+
+def _is_expanded_subgraph_internal_node(node_key: str) -> bool:
+    """Return whether ``node_key`` identifies a generated subgraph body node."""
+
+    return ".__sg_" in node_key
+
+
+def _is_actionable_widget_input(live_input: LiveNodeInputDefinition) -> bool:
+    """Return whether a required live input represents a literal widget field."""
+
+    if live_input.choices:
+        return True
+    return live_input.value_type.upper() in _ACTIONABLE_WIDGET_TYPES
+
+
+def field_spec_from_live_input(live_input: LiveNodeInputDefinition) -> object:
+    """Normalize live input metadata to the compact field-spec parser shape."""
+
+    metadata = dict(live_input.raw)
+    if live_input.has_default:
+        metadata["default"] = copy.deepcopy(live_input.default)
+    if live_input.choices:
+        return [list(live_input.choices), metadata]
+    return [live_input.value_type, metadata]
 
 
 def iter_definition_input_fields(
@@ -192,6 +340,7 @@ def _mutable_mapping_or_none(value: object) -> MutableMapping[object, object] | 
 
 __all__ = [
     "default_from_field_spec",
+    "field_spec_from_live_input",
     "input_type_name",
     "is_randomizable_seed_input",
     "iter_definition_input_fields",

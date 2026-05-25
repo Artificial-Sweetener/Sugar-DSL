@@ -21,6 +21,7 @@ from collections.abc import Mapping
 from typing import Any, Literal
 
 from .graph import CubeGraph
+from .live_definitions import LiveNodeDefinitionProvider
 
 BindingKind = Literal["input", "output"]
 
@@ -46,7 +47,12 @@ def resolve_node_key(cube: CubeGraph, alias: str, node_name: str) -> str:
 
 
 def resolve_input_key(
-    cube: CubeGraph, alias: str, node_name: str, input_label: str
+    cube: CubeGraph,
+    alias: str,
+    node_name: str,
+    input_label: str,
+    *,
+    live_node_definition_provider: LiveNodeDefinitionProvider | None = None,
 ) -> tuple[str, str]:
     """Resolve a script-facing input label to a materialized node and machine key."""
 
@@ -55,7 +61,12 @@ def resolve_input_key(
     if not isinstance(node, dict):
         raise RuntimeError(f"Node '{node_name}' not found in cube '{alias}'.")
     local_name = _local_node_name(alias, node_key)
-    label_index = _input_labels_for_node(cube, local_name, node)
+    label_index = _input_labels_for_node(
+        cube,
+        local_name,
+        node,
+        live_node_definition_provider=live_node_definition_provider,
+    )
     matches = label_index.get(input_label, set())
     if len(matches) == 1:
         return node_key, next(iter(matches))
@@ -71,7 +82,12 @@ def resolve_input_key(
 
 
 def resolve_input_label_for_node(
-    cube: CubeGraph, alias: str, node_key: str, input_label: str
+    cube: CubeGraph,
+    alias: str,
+    node_key: str,
+    input_label: str,
+    *,
+    live_node_definition_provider: LiveNodeDefinitionProvider | None = None,
 ) -> str | None:
     """Resolve an input label against one materialized node without raising on misses."""
 
@@ -79,7 +95,12 @@ def resolve_input_label_for_node(
     if not isinstance(node, dict):
         raise RuntimeError(f"Node '{node_key}' not found in cube '{alias}'.")
     local_name = _local_node_name(alias, node_key)
-    label_index = _input_labels_for_node(cube, local_name, node)
+    label_index = _input_labels_for_node(
+        cube,
+        local_name,
+        node,
+        live_node_definition_provider=live_node_definition_provider,
+    )
     matches = label_index.get(input_label, set())
     if len(matches) > 1:
         choices = ", ".join(sorted(matches))
@@ -92,7 +113,11 @@ def resolve_input_label_for_node(
 
 
 def _input_labels_for_node(
-    cube: CubeGraph, local_node_name: str, node: Mapping[str, Any]
+    cube: CubeGraph,
+    local_node_name: str,
+    node: Mapping[str, Any],
+    *,
+    live_node_definition_provider: LiveNodeDefinitionProvider | None,
 ) -> dict[str, set[str]]:
     """Build label-to-machine-input mappings for one node scope."""
 
@@ -107,7 +132,28 @@ def _input_labels_for_node(
         for input_name in inputs:
             if isinstance(input_name, str) and input_name:
                 _add_label(labels, input_name, input_name)
+    if isinstance(class_type, str) and live_node_definition_provider is not None:
+        _add_live_input_labels(live_node_definition_provider, class_type, labels)
     return labels
+
+
+def _add_live_input_labels(
+    live_node_definition_provider: LiveNodeDefinitionProvider,
+    class_type: str,
+    labels: dict[str, set[str]],
+) -> None:
+    """Add current Comfy input labels supplied by a host live-definition adapter."""
+
+    live_definition = live_node_definition_provider.definition_for(class_type)
+    if live_definition is None:
+        return
+    for input_name, input_definition in live_definition.inputs.items():
+        if not input_name:
+            continue
+        _add_label(labels, input_name, input_name)
+        label = _first_string(input_definition.raw, ("label", "localized_name", "name"))
+        if label:
+            _add_label(labels, label, input_name)
 
 
 def _add_surface_control_labels(

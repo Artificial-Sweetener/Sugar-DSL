@@ -66,6 +66,7 @@ from .ir import (
     add_set,
     create_spawn_plan,
 )
+from .live_definitions import LiveNodeDefinitionProvider
 from .materializer import CubeMaterializer
 from .resolver import (
     require_mapping,
@@ -147,6 +148,7 @@ def analyze_text(
     *,
     seed_provider: SeedProvider = generate_comfy_seed,
     cube_artifact_resolver: CubeArtifactResolver | None = None,
+    live_node_definition_provider: LiveNodeDefinitionProvider | None = None,
 ) -> SpawnPlan:
     """Analyze DSL text into a spawn plan.
 
@@ -164,6 +166,7 @@ def analyze_text(
         local_flavor_root=local_flavor_root,
         seed_provider=seed_provider,
         cube_artifact_resolver=cube_artifact_resolver,
+        live_node_definition_provider=live_node_definition_provider,
     )
 
 
@@ -174,6 +177,7 @@ def analyze_script(
     *,
     seed_provider: SeedProvider = generate_comfy_seed,
     cube_artifact_resolver: CubeArtifactResolver | None = None,
+    live_node_definition_provider: LiveNodeDefinitionProvider | None = None,
 ) -> SpawnPlan:
     """Analyze a parsed script into a spawn plan.
 
@@ -290,6 +294,7 @@ def analyze_script(
                 alias_registry,
                 stmt.line,
                 seed_provider,
+                live_node_definition_provider,
             )
             continue
 
@@ -319,7 +324,15 @@ def analyze_script(
         raise RuntimeError(f"Line {getattr(stmt, 'line', '?')}: Unsupported statement '{stmt}'.")
 
     for set_entry in deferred_sets:
-        _apply_explicit_set(set_entry, aliases, cubes, alias_registry, plan, seed_provider)
+        _apply_explicit_set(
+            set_entry,
+            aliases,
+            cubes,
+            alias_registry,
+            plan,
+            seed_provider,
+            live_node_definition_provider,
+        )
 
     resolved_enables = _resolve_enable_entries(deferred_enable, cubes, alias_registry)
     resolved_disables = _resolve_disable_entries(deferred_disable, cubes, alias_registry)
@@ -356,7 +369,15 @@ def analyze_script(
     apply_plan_inheritance(cubes, order, disabled_nodes, on_set=record_inferred_set)
 
     for wildcard_entry in deferred_wildcards:
-        _apply_wildcard_set(wildcard_entry, aliases, cubes, alias_registry, plan, seed_provider)
+        _apply_wildcard_set(
+            wildcard_entry,
+            aliases,
+            cubes,
+            alias_registry,
+            plan,
+            seed_provider,
+            live_node_definition_provider,
+        )
 
     return plan
 
@@ -472,6 +493,7 @@ def _apply_explicit_set(
     alias_registry: AliasRegistry,
     plan: SpawnPlan,
     seed_provider: SeedProvider,
+    live_node_definition_provider: LiveNodeDefinitionProvider | None,
 ) -> None:
     """Apply one deferred explicit set statement to cubes and the plan."""
 
@@ -486,7 +508,11 @@ def _apply_explicit_set(
         cube_name = alias_registry.resolve(parts[0], line=entry.line, context="set")
         node_name = ".".join(parts[1:-1])
         matching_node, input_key = resolve_input_key(
-            cubes[cube_name], cube_name, node_name, parts[-1]
+            cubes[cube_name],
+            cube_name,
+            node_name,
+            parts[-1],
+            live_node_definition_provider=live_node_definition_provider,
         )
         value = _eval_expr(
             entry.value,
@@ -495,6 +521,7 @@ def _apply_explicit_set(
             alias_registry,
             entry.line,
             seed_provider,
+            live_node_definition_provider,
         )
         apply_set(cubes[cube_name], cube_name, matching_node, input_key, value)
         add_set(plan, cube_name, matching_node, input_key, value, entry.line, "explicit")
@@ -574,6 +601,7 @@ def _apply_wildcard_set(
     alias_registry: AliasRegistry,
     plan: SpawnPlan,
     seed_provider: SeedProvider,
+    live_node_definition_provider: LiveNodeDefinitionProvider | None,
 ) -> None:
     """Apply one wildcard set to matching node inputs across all cubes."""
 
@@ -585,6 +613,7 @@ def _apply_wildcard_set(
         alias_registry,
         entry.line,
         seed_provider,
+        live_node_definition_provider,
     )
 
     resolved_matches: list[tuple[str, str, str]] = []
@@ -594,7 +623,13 @@ def _apply_wildcard_set(
                 continue
             if target.cls != "*" and node.get("class_type") != target.cls:
                 continue
-            input_key = _resolve_wildcard_input(cube, cube_name, node_key, target.input_key)
+            input_key = _resolve_wildcard_input(
+                cube,
+                cube_name,
+                node_key,
+                target.input_key,
+                live_node_definition_provider=live_node_definition_provider,
+            )
             if input_key is None:
                 continue
             resolved_matches.append((cube_name, node_key, input_key))
@@ -630,10 +665,18 @@ def _resolve_wildcard_input(
     alias: str,
     node_key: str,
     input_label: str,
+    *,
+    live_node_definition_provider: LiveNodeDefinitionProvider | None,
 ) -> str | None:
     """Resolve a wildcard input label against one candidate node."""
 
-    return resolve_input_label_for_node(cube, alias, node_key, input_label)
+    return resolve_input_label_for_node(
+        cube,
+        alias,
+        node_key,
+        input_label,
+        live_node_definition_provider=live_node_definition_provider,
+    )
 
 
 def _resolve_disable(
@@ -788,6 +831,7 @@ def _eval_expr(
     alias_registry: AliasRegistry,
     line: int,
     seed_provider: SeedProvider,
+    live_node_definition_provider: LiveNodeDefinitionProvider | None,
 ) -> Any:
     """Evaluate a Sugar expression against aliases and materialized cube inputs."""
 
@@ -803,7 +847,13 @@ def _eval_expr(
     if isinstance(expr, RandomExpr):
         return seed_provider()
     if isinstance(expr, DottedRefExpr):
-        return _resolve_dotted_ref(expr.ref, cubes, alias_registry, line)
+        return _resolve_dotted_ref(
+            expr.ref,
+            cubes,
+            alias_registry,
+            line,
+            live_node_definition_provider,
+        )
     if isinstance(expr, UnaryExpr):
         value = _eval_expr(
             expr.operand,
@@ -812,6 +862,7 @@ def _eval_expr(
             alias_registry,
             line,
             seed_provider,
+            live_node_definition_provider,
         )
         if expr.op == "-":
             _ensure_number(value, line, "unary '-' expression")
@@ -825,6 +876,7 @@ def _eval_expr(
             alias_registry,
             line,
             seed_provider,
+            live_node_definition_provider,
         )
         right = _eval_expr(
             expr.right,
@@ -833,6 +885,7 @@ def _eval_expr(
             alias_registry,
             line,
             seed_provider,
+            live_node_definition_provider,
         )
         return _apply_binary(expr.op, left, right, line)
     raise RuntimeError(f"Line {line}: Unsupported expression '{expr}'.")
@@ -843,6 +896,7 @@ def _resolve_dotted_ref(
     cubes: CubeGraphByAlias,
     alias_registry: AliasRegistry,
     line: int,
+    live_node_definition_provider: LiveNodeDefinitionProvider | None,
 ) -> Any:
     """Resolve a `cube.node.input` expression to the current input value."""
 
@@ -854,7 +908,13 @@ def _resolve_dotted_ref(
         )
     cube_name = alias_registry.resolve(ref.parts[0], line=line, context="reference")
     node_name = ref.parts[1]
-    node_key, input_key = resolve_input_key(cubes[cube_name], cube_name, node_name, ref.parts[2])
+    node_key, input_key = resolve_input_key(
+        cubes[cube_name],
+        cube_name,
+        node_name,
+        ref.parts[2],
+        live_node_definition_provider=live_node_definition_provider,
+    )
     nodes = require_mapping(cubes[cube_name], "nodes", cube_name)
     node = nodes.get(node_key, {})
     if not isinstance(node, dict):

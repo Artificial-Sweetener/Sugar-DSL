@@ -36,6 +36,7 @@ from .graph_ops import (
     apply_plan_ui_inherited_provider_values,
 )
 from .ir import ConnectionEntry, NodeLinkEntry, SpawnPlan
+from .live_definitions import LiveNodeDefinitionProvider
 from .materializer import CubeMaterializer
 from .plan_validation import validate_connected_recipe
 from .subgraph_expand import expand_cube_subgraph_wrappers
@@ -77,9 +78,11 @@ def materialize_recipe(
     cube_root: Path | None = None,
     *,
     cube_artifact_resolver: CubeArtifactResolver | None = None,
+    live_node_definition_provider: LiveNodeDefinitionProvider | None = None,
 ) -> MaterializedRecipe:
     """Resolve a spawn plan into materialized cube instances."""
 
+    _ = live_node_definition_provider
     if not isinstance(plan, dict):
         logger.error(
             "Spawn plan has invalid type.",

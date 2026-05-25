@@ -23,11 +23,13 @@ from typing import Any, TypedDict
 from ..catalog.artifacts import CubeArtifactResolver
 from ..compiler.analyzer import analyze_script
 from ..compiler.codegen import recipe_to_api_prompt
+from ..compiler.live_definitions import LiveNodeDefinitionProvider
 from ..compiler.recipe import materialize_recipe
 from ..compiler.ui_workflow import recipe_to_ui_workflow
 from ..dsl.parser import parse_script
 from ..runtime.modifiers import apply_hooks, patch_random_seeds, patch_save_paths
 from ..runtime.normalization import sanitize_inputs
+from ..runtime.live_definitions import ComfyObjectInfoLiveNodeDefinitionProvider
 from ..shared.seed import SeedProvider, generate_comfy_seed
 
 Workflow = dict[str, Any]
@@ -48,6 +50,8 @@ def build_workflow(
     *,
     seed_provider: SeedProvider = generate_comfy_seed,
     cube_artifact_resolver: CubeArtifactResolver | None = None,
+    live_node_definition_provider: LiveNodeDefinitionProvider | None = None,
+    comfy_server: str | None = None,
 ) -> Workflow:
     """Build a ComfyUI workflow from a Sugar script file."""
 
@@ -63,6 +67,8 @@ def build_workflow(
         local_flavor_root=local_flavor_root,
         seed_provider=seed_provider,
         cube_artifact_resolver=cube_artifact_resolver,
+        live_node_definition_provider=live_node_definition_provider,
+        comfy_server=comfy_server,
     )
 
 
@@ -74,6 +80,8 @@ def build_workflow_from_text(
     *,
     seed_provider: SeedProvider = generate_comfy_seed,
     cube_artifact_resolver: CubeArtifactResolver | None = None,
+    live_node_definition_provider: LiveNodeDefinitionProvider | None = None,
+    comfy_server: str | None = None,
 ) -> Workflow:
     """Build a ComfyUI workflow from Sugar DSL text."""
 
@@ -84,6 +92,8 @@ def build_workflow_from_text(
         local_flavor_root=local_flavor_root,
         seed_provider=seed_provider,
         cube_artifact_resolver=cube_artifact_resolver,
+        live_node_definition_provider=live_node_definition_provider,
+        comfy_server=comfy_server,
     )
 
 
@@ -95,6 +105,8 @@ def build_comfy_artifacts(
     *,
     seed_provider: SeedProvider = generate_comfy_seed,
     cube_artifact_resolver: CubeArtifactResolver | None = None,
+    live_node_definition_provider: LiveNodeDefinitionProvider | None = None,
+    comfy_server: str | None = None,
 ) -> ComfyArtifacts:
     """Build executable and placed ComfyUI artifacts from a Sugar script file."""
 
@@ -110,6 +122,8 @@ def build_comfy_artifacts(
         local_flavor_root=local_flavor_root,
         seed_provider=seed_provider,
         cube_artifact_resolver=cube_artifact_resolver,
+        live_node_definition_provider=live_node_definition_provider,
+        comfy_server=comfy_server,
     )
 
 
@@ -121,6 +135,8 @@ def build_comfy_artifacts_from_text(
     *,
     seed_provider: SeedProvider = generate_comfy_seed,
     cube_artifact_resolver: CubeArtifactResolver | None = None,
+    live_node_definition_provider: LiveNodeDefinitionProvider | None = None,
+    comfy_server: str | None = None,
 ) -> ComfyArtifacts:
     """Build executable and placed ComfyUI artifacts from Sugar DSL text."""
 
@@ -130,6 +146,8 @@ def build_comfy_artifacts_from_text(
         local_flavor_root=local_flavor_root,
         seed_provider=seed_provider,
         cube_artifact_resolver=cube_artifact_resolver,
+        live_node_definition_provider=live_node_definition_provider,
+        comfy_server=comfy_server,
     )
     _prepare_runtime_workflow(
         artifacts["prompt"],
@@ -147,6 +165,8 @@ def _build_workflow_from_script_text(
     local_flavor_root: Path | None,
     seed_provider: SeedProvider,
     cube_artifact_resolver: CubeArtifactResolver | None,
+    live_node_definition_provider: LiveNodeDefinitionProvider | None,
+    comfy_server: str | None,
 ) -> Workflow:
     """Run the API orchestration pipeline for one script payload."""
 
@@ -156,6 +176,8 @@ def _build_workflow_from_script_text(
         local_flavor_root=local_flavor_root,
         seed_provider=seed_provider,
         cube_artifact_resolver=cube_artifact_resolver,
+        live_node_definition_provider=live_node_definition_provider,
+        comfy_server=comfy_server,
     )
     _prepare_runtime_workflow(
         workflow,
@@ -172,6 +194,8 @@ def _compile_workflow_from_script_text(
     local_flavor_root: Path | None,
     seed_provider: SeedProvider,
     cube_artifact_resolver: CubeArtifactResolver | None,
+    live_node_definition_provider: LiveNodeDefinitionProvider | None,
+    comfy_server: str | None,
 ) -> Workflow:
     """Compile Sugar DSL text into workflow JSON before runtime patching."""
 
@@ -181,6 +205,8 @@ def _compile_workflow_from_script_text(
         local_flavor_root=local_flavor_root,
         seed_provider=seed_provider,
         cube_artifact_resolver=cube_artifact_resolver,
+        live_node_definition_provider=live_node_definition_provider,
+        comfy_server=comfy_server,
     )["prompt"]
 
 
@@ -191,9 +217,15 @@ def _compile_comfy_artifacts_from_script_text(
     local_flavor_root: Path | None,
     seed_provider: SeedProvider,
     cube_artifact_resolver: CubeArtifactResolver | None = None,
+    live_node_definition_provider: LiveNodeDefinitionProvider | None = None,
+    comfy_server: str | None = None,
 ) -> ComfyArtifacts:
     """Compile Sugar DSL text into executable and UI workflow artifacts."""
 
+    active_live_provider = _resolve_live_node_definition_provider(
+        live_node_definition_provider=live_node_definition_provider,
+        comfy_server=comfy_server,
+    )
     script = parse_script(script_text)
     plan = analyze_script(
         script,
@@ -201,16 +233,36 @@ def _compile_comfy_artifacts_from_script_text(
         local_flavor_root=local_flavor_root,
         seed_provider=seed_provider,
         cube_artifact_resolver=cube_artifact_resolver,
+        live_node_definition_provider=active_live_provider,
     )
     recipe = materialize_recipe(
         plan,
         cube_root,
         cube_artifact_resolver=cube_artifact_resolver,
+        live_node_definition_provider=active_live_provider,
     )
     return {
-        "prompt": recipe_to_api_prompt(recipe, seed_provider=seed_provider),
+        "prompt": recipe_to_api_prompt(
+            recipe,
+            seed_provider=seed_provider,
+            live_node_definition_provider=active_live_provider,
+        ),
         "workflow": recipe_to_ui_workflow(recipe),
     }
+
+
+def _resolve_live_node_definition_provider(
+    *,
+    live_node_definition_provider: LiveNodeDefinitionProvider | None,
+    comfy_server: str | None,
+) -> LiveNodeDefinitionProvider | None:
+    """Return the caller-supplied or standalone Comfy live-definition provider."""
+
+    if live_node_definition_provider is not None:
+        return live_node_definition_provider
+    if comfy_server is None:
+        return None
+    return ComfyObjectInfoLiveNodeDefinitionProvider(server=comfy_server)
 
 
 def _prepare_runtime_workflow(
