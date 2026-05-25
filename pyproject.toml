@@ -46,6 +46,9 @@ include = ["sugar", "sugar.*"]
 [tool.setuptools]
 zip-safe = false
 
+[tool.setuptools.package-data]
+sugar = ["py.typed"]
+
 [tool.ruff]
 line-length = 100
 target-version = "py310"
