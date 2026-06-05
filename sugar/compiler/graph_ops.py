@@ -362,7 +362,44 @@ def apply_plan_sets(cubes: CubeGraphByAlias, plan: SpawnPlan, kind: str) -> None
         cube = cubes.get(alias)
         if not cube:
             raise RuntimeError(f"Set references unknown cube alias '{alias}'.")
+        if kind == "wildcard" and _plan_set_targets_connected_input(
+            cubes,
+            cube,
+            alias,
+            set_entry,
+            input_key,
+        ):
+            continue
         apply_set(cube, alias, node_name, input_key, value)
+
+
+def _plan_set_targets_connected_input(
+    cubes: CubeGraphByAlias,
+    cube: CubeGraph,
+    alias: str,
+    set_entry: Mapping[str, Any],
+    input_key: str,
+) -> bool:
+    """Return whether a wildcard set entry points at a graph-owned input."""
+
+    node_key = _set_node_key(set_entry, alias, cube)
+    node = _require_node(cube, alias, node_key)
+    value = _node_inputs(node, alias, node_key).get(input_key)
+    if not is_comfy_node_link(value):
+        return False
+    link = cast(list[Any], value)
+    source_node_key = cast(str, link[0])
+    return _node_link_source_exists(cubes, source_node_key)
+
+
+def _node_link_source_exists(cubes: CubeGraphByAlias, source_node_key: str) -> bool:
+    """Return whether a link source names a materialized node in the recipe."""
+
+    for cube in cubes.values():
+        nodes = cube.get("nodes")
+        if isinstance(nodes, dict) and source_node_key in nodes:
+            return True
+    return False
 
 
 def apply_set(cube: CubeGraph, alias: str, node_name: str, input_key: str, value: Any) -> str:

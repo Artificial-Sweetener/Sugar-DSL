@@ -20,7 +20,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 import logging
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 from ..catalog.artifacts import CubeArtifactResolver, FilesystemCubeArtifactResolver
 from ..catalog.models import CubeDocument
@@ -66,6 +66,7 @@ from .ir import (
     add_set,
     create_spawn_plan,
 )
+from .links import is_comfy_node_link
 from .live_definitions import LiveNodeDefinitionProvider
 from .materializer import CubeMaterializer
 from .resolver import (
@@ -603,7 +604,7 @@ def _apply_wildcard_set(
     seed_provider: SeedProvider,
     live_node_definition_provider: LiveNodeDefinitionProvider | None,
 ) -> None:
-    """Apply one wildcard set to matching node inputs across all cubes."""
+    """Apply one wildcard set to matching editable node inputs across all cubes."""
 
     target = entry.target
     value = _eval_expr(
@@ -632,6 +633,15 @@ def _apply_wildcard_set(
             )
             if input_key is None:
                 continue
+            if _input_is_connected_node_link(
+                cubes,
+                node,
+                cube_name,
+                node_key,
+                input_key,
+                entry.line,
+            ):
+                continue
             resolved_matches.append((cube_name, node_key, input_key))
 
     matched_keys = {input_key for _, _, input_key in resolved_matches}
@@ -658,6 +668,37 @@ def _apply_wildcard_set(
             entry.line,
             "wildcard",
         )
+
+
+def _input_is_connected_node_link(
+    cubes: CubeGraphByAlias,
+    node: dict[str, Any],
+    alias: str,
+    node_key: str,
+    input_key: str,
+    line: int,
+) -> bool:
+    """Return whether an existing graph input should reject wildcard value edits."""
+
+    inputs = node.get("inputs", {})
+    if not isinstance(inputs, dict):
+        raise RuntimeError(f"Line {line}: Node '{node_key}' in cube '{alias}' has invalid inputs.")
+    value = inputs.get(input_key)
+    if not is_comfy_node_link(value):
+        return False
+    link = cast(list[Any], value)
+    source_node_key = cast(str, link[0])
+    return _node_link_source_exists(cubes, source_node_key)
+
+
+def _node_link_source_exists(cubes: CubeGraphByAlias, source_node_key: str) -> bool:
+    """Return whether a link source names a materialized node in the recipe."""
+
+    for cube in cubes.values():
+        nodes = cube.get("nodes")
+        if isinstance(nodes, dict) and source_node_key in nodes:
+            return True
+    return False
 
 
 def _resolve_wildcard_input(

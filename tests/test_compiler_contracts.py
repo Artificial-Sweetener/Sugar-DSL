@@ -83,6 +83,35 @@ def _write_sink_cube(cube_root: Path, *, input_binding: str = "input.image") -> 
     )
 
 
+def _write_connected_value_cube(cube_root: Path) -> None:
+    """Write a fixture with one literal input and one graph-owned input."""
+
+    write_cube(
+        cube_root / "connected_value.cube",
+        {
+            "cube_id": "connected_value",
+            "version": "1.0.0",
+            "nodes": {
+                "provider": {"class_type": "ValueProvider", "inputs": {}},
+                "literal_consumer": {
+                    "class_type": "ValueConsumer",
+                    "inputs": {"encode_style": "default"},
+                },
+                "linked_consumer": {
+                    "class_type": "ValueConsumer",
+                    "inputs": {"encode_style": ["provider", 0]},
+                },
+                "binding_consumer": {
+                    "class_type": "ValueConsumer",
+                    "inputs": {"encode_style": None},
+                },
+            },
+            "inputs": {"input.style": [["binding_consumer", "encode_style"]]},
+            "outputs": {"output.image": "literal_consumer"},
+        },
+    )
+
+
 def _wrapper_cube_payload_for_label_validation() -> dict[str, Any]:
     """Return a minimal UUID wrapper cube for catalog label validation."""
 
@@ -680,6 +709,91 @@ def test_wildcard_set_applies_after_explicit_set(tmp_path: Path) -> None:
     )
 
     assert _single_node_input(workflow, "seed") == 55
+
+
+def test_wildcard_set_skips_connected_node_inputs(tmp_path: Path) -> None:
+    """Wildcard set operations edit literals without replacing graph links."""
+
+    cube_root = tmp_path / "cubes"
+    cube_root.mkdir()
+    _write_connected_value_cube(cube_root)
+
+    plan = analyze_text(
+        """
+        use "connected_value" as f
+        set *.*.encode_style = "A1111"
+        """,
+        cube_root=cube_root,
+    )
+    wildcard_sets = [entry for entry in plan["sets"] if entry["metadata"]["kind"] == "wildcard"]
+    workflow = spawn_plan_to_workflow(plan)
+    provider_id = next(
+        node_id
+        for node_id, node in workflow.items()
+        if ((node or {}).get("_meta") or {}).get("title") == "f.provider"
+    )
+
+    assert [(entry["node"], entry["input"], entry["value"]) for entry in wildcard_sets] == [
+        ("literal_consumer", "encode_style", "A1111"),
+        ("binding_consumer", "encode_style", "A1111"),
+    ]
+    assert _node_by_title(workflow, "f.literal_consumer")["inputs"]["encode_style"] == "A1111"
+    assert _node_by_title(workflow, "f.binding_consumer")["inputs"]["encode_style"] == "A1111"
+    assert _node_by_title(workflow, "f.linked_consumer")["inputs"]["encode_style"] == [
+        provider_id,
+        0,
+    ]
+
+
+def test_replayed_wildcard_set_skips_connected_node_inputs(tmp_path: Path) -> None:
+    """Materialized wildcard set entries preserve links even when a plan contains them."""
+
+    cube_root = tmp_path / "cubes"
+    cube_root.mkdir()
+    _write_connected_value_cube(cube_root)
+
+    plan = analyze_text(
+        'use "connected_value" as f',
+        cube_root=cube_root,
+    )
+    plan["sets"].append(
+        {
+            "alias": "f",
+            "node": "binding_consumer",
+            "input": "encode_style",
+            "value": "A1111",
+            "metadata": {
+                "kind": "wildcard",
+                "node_key": "f.binding_consumer",
+                "source_line": 2,
+            },
+        }
+    )
+    plan["sets"].append(
+        {
+            "alias": "f",
+            "node": "linked_consumer",
+            "input": "encode_style",
+            "value": "A1111",
+            "metadata": {
+                "kind": "wildcard",
+                "node_key": "f.linked_consumer",
+                "source_line": 2,
+            },
+        }
+    )
+    workflow = spawn_plan_to_workflow(plan, cube_root=cube_root)
+    provider_id = next(
+        node_id
+        for node_id, node in workflow.items()
+        if ((node or {}).get("_meta") or {}).get("title") == "f.provider"
+    )
+
+    assert _node_by_title(workflow, "f.linked_consumer")["inputs"]["encode_style"] == [
+        provider_id,
+        0,
+    ]
+    assert _node_by_title(workflow, "f.binding_consumer")["inputs"]["encode_style"] == "A1111"
 
 
 def test_schema_seed_materialization_generates_custom_sampler_seed(
