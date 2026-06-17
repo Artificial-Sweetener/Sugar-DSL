@@ -139,7 +139,7 @@ def live_output_usage(cube: CubeGraph, disabled_nodes: set[str]) -> set[tuple[st
 
 
 def discover_live_providers(cube: CubeGraph, disabled_nodes: set[str]) -> ProviderMap:
-    """Return live provider outputs grouped by inheritance slot."""
+    """Return live origin provider outputs grouped by inheritance slot."""
 
     providers: ProviderMap = {"model": [], "clip": [], "vae": []}
     usage = live_output_usage(cube, disabled_nodes)
@@ -157,9 +157,11 @@ def discover_live_providers(cube: CubeGraph, disabled_nodes: set[str]) -> Provid
                 continue
             if (node_key, output_index) not in usage:
                 continue
-            if not _provider_output_has_required_source(
+            if not _provider_output_is_inheritance_origin(
+                cube,
                 nodes,
                 node,
+                output_index,
                 slot,
                 disabled_nodes,
             ):
@@ -308,7 +310,7 @@ def _resolve_provider_source(
     disabled_nodes: set[str],
     seen: set[tuple[str, int]],
 ) -> ProviderLink | None:
-    """Trace transparent selector outputs to their selected typed provider."""
+    """Trace transparent selector outputs to their selected origin provider."""
 
     nodes = _node_map(cube)
     if not _source_node_is_live(nodes, disabled_nodes, node_key):
@@ -319,9 +321,11 @@ def _resolve_provider_source(
 
     node = nodes[node_key]
     source_slot = _inheritable_slot_or_none(output_slot_type(cube, node, output_index))
-    if source_slot == slot and _provider_output_has_required_source(
+    if source_slot == slot and _provider_output_is_inheritance_origin(
+        cube,
         nodes,
         node,
+        output_index,
         slot,
         disabled_nodes,
     ):
@@ -425,6 +429,43 @@ def _provider_output_has_required_source(
     return any(
         _input_value_can_supply_provider(nodes, value, disabled_nodes) for value in present_values
     )
+
+
+def _provider_output_is_inheritance_origin(
+    cube: CubeGraph,
+    nodes: Mapping[str, Mapping[str, Any]],
+    node: Mapping[str, Any],
+    output_index: int,
+    slot: InheritanceSlot,
+    disabled_nodes: set[str],
+) -> bool:
+    """Return whether an output is a live root provider for inheritance.
+
+    Derived resource transforms also produce ``MODEL``, ``CLIP``, or ``VAE``
+    outputs, but inheriting from them stacks downstream cubes on an already
+    transformed resource. Inheritance follows provider origins instead.
+    """
+
+    if not _provider_output_has_required_source(nodes, node, slot, disabled_nodes):
+        return False
+    return not _output_derives_from_inheritable_input(cube, node, output_index)
+
+
+def _output_derives_from_inheritable_input(
+    cube: CubeGraph,
+    node: Mapping[str, Any],
+    output_index: int,
+) -> bool:
+    """Return whether an inheritable output is derived from resource inputs."""
+
+    if _inheritable_slot_or_none(output_slot_type(cube, node, output_index)) is None:
+        return False
+    for input_name, value in _input_map(node).items():
+        if _comfy_link_or_none(value) is None:
+            continue
+        if _input_slot_type(cube, node, input_name) is not None:
+            return True
+    return False
 
 
 def _input_value_can_supply_provider(

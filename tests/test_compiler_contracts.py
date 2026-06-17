@@ -1470,6 +1470,136 @@ def test_authored_bypass_provider_inherits_model_clip_and_vae_links(
     assert _object_provider_inputs(workflow).isdisjoint({"auto"})
 
 
+def test_inheritance_uses_origin_provider_not_derived_schedule_model(
+    tmp_path: Path,
+) -> None:
+    """Downstream bypass providers should inherit from the original provider source."""
+
+    cube_root = tmp_path / "cubes"
+    cube_root.mkdir()
+    definitions = {
+        **_provider_inheritance_definitions(),
+        "Mahiro": {
+            "input": {"required": {"model": ["MODEL"]}},
+            "input_order": {"required": ["model"]},
+            "output": ["MODEL"],
+            "output_name": ["MODEL"],
+        },
+    }
+    write_cube(
+        cube_root / "provider_source.cube",
+        {
+            "cube_id": "provider_source",
+            "version": "1.0.0",
+            "nodes": {
+                "provider": {
+                    "class_type": "Provider",
+                    "inputs": {"model": "source-model", "clip": "source-clip"},
+                },
+                "mahiro": {
+                    "class_type": "Mahiro",
+                    "inputs": {"model": ["provider", 0]},
+                },
+                "schedule": {
+                    "class_type": "Schedule",
+                    "inputs": {
+                        "model_in": ["mahiro", 0],
+                        "clip_in": ["provider", 1],
+                    },
+                },
+                "vae_consumer": {
+                    "class_type": "VaeConsumer",
+                    "inputs": {"vae": ["provider", 2]},
+                },
+                "image": {
+                    "class_type": "ImageSource",
+                    "inputs": {"model": ["schedule", 0]},
+                },
+            },
+            "outputs": {"output.image": ["image", 0]},
+            "definitions": definitions,
+        },
+    )
+    for cube_name in ("upscale_stage", "detailer_stage"):
+        write_cube(
+            cube_root / f"{cube_name}.cube",
+            {
+                "cube_id": cube_name,
+                "version": "1.0.0",
+                "nodes": {
+                    "provider": {
+                        "class_type": "Provider",
+                        "mode": 4,
+                        "inputs": {"model": "auto", "clip": "auto", "vae": "auto"},
+                    },
+                    "mahiro": {
+                        "class_type": "Mahiro",
+                        "inputs": {"model": ["provider", 0]},
+                    },
+                    "schedule": {
+                        "class_type": "Schedule",
+                        "inputs": {
+                            "model_in": ["mahiro", 0],
+                            "clip_in": ["provider", 1],
+                        },
+                    },
+                    "vae_consumer": {
+                        "class_type": "VaeConsumer",
+                        "inputs": {"vae": ["provider", 2]},
+                    },
+                    "image": {
+                        "class_type": "ImageSource",
+                        "inputs": {"model": ["schedule", 0]},
+                    },
+                    "image_sink": {"class_type": "ImageSink", "inputs": {"image": None}},
+                },
+                "inputs": {"input.image": [["image_sink", "image"]]},
+                "outputs": {"output.image": ["image", 0]},
+                "definitions": definitions,
+            },
+        )
+
+    script = """
+    use "provider_source" as A
+    use "upscale_stage" as B
+    use "detailer_stage" as C
+
+    connect A.output.image to B.input.image
+    connect B.output.image to C.input.image
+    """
+    plan = analyze_text(script, cube_root=cube_root)
+    inferred_sets = {
+        ((entry.get("metadata") or {}).get("node_key"), entry.get("input")): entry
+        for entry in plan["sets"]
+        if (entry.get("metadata") or {}).get("kind") == "inferred"
+    }
+
+    assert inferred_sets[("B.mahiro", "model")]["value"] == ["A.provider", 0]
+    assert inferred_sets[("B.schedule", "clip_in")]["value"] == ["A.provider", 1]
+    assert inferred_sets[("B.vae_consumer", "vae")]["value"] == ["A.provider", 2]
+    assert inferred_sets[("C.mahiro", "model")]["value"] == ["A.provider", 0]
+    assert inferred_sets[("C.schedule", "clip_in")]["value"] == ["A.provider", 1]
+    assert inferred_sets[("C.vae_consumer", "vae")]["value"] == ["A.provider", 2]
+    assert inferred_sets[("C.mahiro", "model")]["value"] != ["B.schedule", 0]
+
+    workflow = build_workflow_from_text(
+        script,
+        output_dir=tmp_path / "out",
+        cube_root=cube_root,
+    )
+    title_by_id = _title_by_id(workflow)
+    source_provider_id = next(
+        node_id for node_id, title in title_by_id.items() if title == "A.provider"
+    )
+    c_mahiro = _node_by_title(workflow, "C.mahiro")
+    c_schedule = _node_by_title(workflow, "C.schedule")
+    c_vae_consumer = _node_by_title(workflow, "C.vae_consumer")
+
+    assert c_mahiro["inputs"]["model"] == [source_provider_id, 0]
+    assert c_schedule["inputs"]["clip_in"] == [source_provider_id, 1]
+    assert c_vae_consumer["inputs"]["vae"] == [source_provider_id, 2]
+
+
 def test_enabled_authored_bypass_provider_uses_local_provider_links(
     tmp_path: Path,
 ) -> None:
