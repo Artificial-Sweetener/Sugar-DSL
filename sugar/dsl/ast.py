@@ -60,6 +60,13 @@ class LiteralExpr(Expr):
 
 
 @dataclass(frozen=True)
+class ListExpr(Expr):
+    """Represent an ordered list of Sugar expressions."""
+
+    items: list[Expr]
+
+
+@dataclass(frozen=True)
 class NameExpr(Expr):
     """Represents a named variable reference."""
 
@@ -170,6 +177,7 @@ class Script:
 
 ExprType = Union[
     LiteralExpr,
+    ListExpr,
     NameExpr,
     RandomExpr,
     DottedRefExpr,

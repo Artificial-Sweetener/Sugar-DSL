@@ -35,6 +35,7 @@ from ..dsl.ast import (
     Expr,
     LetStmt,
     LiteralExpr,
+    ListExpr,
     NameExpr,
     PathRef,
     RandomExpr,
@@ -67,6 +68,7 @@ from .ir import (
     create_spawn_plan,
 )
 from .links import is_comfy_node_link
+from .literal_values import authored_literal_list
 from .live_definitions import LiveNodeDefinitionProvider
 from .materializer import CubeMaterializer
 from .resolver import (
@@ -881,6 +883,21 @@ def _eval_expr(
         if isinstance(value, str) and "\n" in value:
             return _normalize_multiline_string(value)
         return value
+    if isinstance(expr, ListExpr):
+        return authored_literal_list(
+            [
+                _eval_expr(
+                    item,
+                    aliases,
+                    cubes,
+                    alias_registry,
+                    line,
+                    seed_provider,
+                    live_node_definition_provider,
+                )
+                for item in expr.items
+            ]
+        )
     if isinstance(expr, NameExpr):
         if expr.name not in aliases:
             raise RuntimeError(f"Line {line}: Unknown variable '{expr.name}'.")

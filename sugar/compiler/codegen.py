@@ -29,6 +29,11 @@ from .graph import CubeGraph
 from .input_materialization import materialize_node_inputs
 from .ir import SpawnPlan
 from .links import is_comfy_node_link
+from .literal_values import (
+    comfy_literal_list_value,
+    is_authored_literal_list,
+    wrap_unlinked_comfy_list,
+)
 from .live_definitions import LiveNodeDefinitionProvider, LiveNodeInputDefinition
 from .recipe import MaterializedRecipe, materialize_recipe
 from .resource_optimization import optimize_execution_resources
@@ -239,11 +244,15 @@ def merge_cubes(cubes: list[CubeGraph]) -> tuple[dict[str, Any], dict[str, str]]
         new_inputs: dict[str, Any] = {}
 
         for key, val in node.get("inputs", {}).items():
-            if is_comfy_node_link(val):
+            if is_authored_literal_list(val):
+                new_inputs[key] = comfy_literal_list_value(val)
+            elif is_comfy_node_link(val):
                 target_sym, port = val
                 if target_sym not in name_to_id:
                     raise ValueError(f"Unknown node reference: {target_sym}")
                 new_inputs[key] = [name_to_id[target_sym], port]
+            elif isinstance(val, list):
+                new_inputs[key] = wrap_unlinked_comfy_list(val)
             else:
                 new_inputs[key] = val
 

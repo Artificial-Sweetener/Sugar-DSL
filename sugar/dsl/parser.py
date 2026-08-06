@@ -28,6 +28,7 @@ from .ast import (
     Expr,
     LetStmt,
     LiteralExpr,
+    ListExpr,
     NameExpr,
     PathRef,
     RandomExpr,
@@ -299,7 +300,7 @@ class _Parser:
         return self._parse_primary()
 
     def _parse_primary(self) -> Expr:
-        """Parse literal, name, random, parenthesized, or dotted-ref expressions."""
+        """Parse literal, list, name, random, parenthesized, or dotted-ref expressions."""
 
         token = self._peek()
         if token.type in (TokenType.IDENT, TokenType.STRING) and self._looks_like_path_ref():
@@ -321,6 +322,8 @@ class _Parser:
         if token.type == TokenType.NULL:
             self._advance()
             return LiteralExpr(value=None, raw="null")
+        if token.type == TokenType.LBRACKET:
+            return self._parse_list_expression()
         if token.type == TokenType.RANDOM:
             self._advance()
             return RandomExpr()
@@ -333,6 +336,22 @@ class _Parser:
             self._advance()
             return NameExpr(name=self._token_value(token))
         raise self._error(token, "Expected expression.")
+
+    def _parse_list_expression(self) -> ListExpr:
+        """Parse a comma-delimited ordered expression list."""
+
+        self._expect(TokenType.LBRACKET, "Expected '[' for list literal.")
+        items: list[Expr] = []
+        if not self._match(TokenType.RBRACKET):
+            while True:
+                items.append(self._parse_expression())
+                if not self._match(TokenType.COMMA):
+                    break
+                self._advance()
+                if self._match(TokenType.RBRACKET):
+                    break
+        self._expect(TokenType.RBRACKET, "Expected ']' after list literal.")
+        return ListExpr(items=items)
 
     def _looks_like_path_ref(self) -> bool:
         """Return whether the next tokens form a dotted path reference."""

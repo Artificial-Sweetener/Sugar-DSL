@@ -38,6 +38,7 @@ from ..catalog.subgraphs import (
 from .graph import CubeGraph
 from .ir import ConnectionEntry
 from .links import is_comfy_node_link
+from .literal_values import plain_literal_value
 from .recipe import MaterializedCubeInstance, MaterializedRecipe
 from .resolver import require_mapping
 from .subgraph_interfaces import (
@@ -504,7 +505,7 @@ def _wrapper_literal_inputs(
         for input_name, value in inputs.items():
             if value is None or is_comfy_node_link(value):
                 continue
-            literals[str(input_name)] = copy.deepcopy(value)
+            literals[str(input_name)] = plain_literal_value(value)
 
     explicit = wrapper_node.get("widgets_values")
     if isinstance(explicit, Mapping):
@@ -846,7 +847,7 @@ def _widget_values(cube: CubeGraph, class_type: str, node_payload: Mapping[str, 
         value = inputs[input_name]
         if is_comfy_node_link(value):
             continue
-        values.append(copy.deepcopy(value))
+        values.append(plain_literal_value(value))
         if definition_field_has_serialized_control_widget(definition, input_name):
             values.append("randomize")
     return values
